@@ -1,0 +1,19 @@
+﻿# Visual Studio
+.vs/
+
+# Build output
+out/
+CMakeFiles/
+CMakeCache.txt
+
+# vcpkg artifacts
+**/vcpkg_installed/
+**/vcpkg-manifest-install.log
+
+# Secrets / local configs
+configs/
+config.generated.json
+
+# OS junk
+.DS_Store
+Thumbs.db

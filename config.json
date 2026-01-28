@@ -1,0 +1,35 @@
+﻿{
+  "inbounds": {
+    "socks5": {
+      "enabled": true,
+      "bind": "127.0.0.1",
+      "port": 1080
+    },
+    "tun": {
+      "enabled": true,
+      "name": "proxycore-tun"
+    }
+  },
+  "active_profile": "home",
+  "profiles": [
+    {
+      "id": "home",
+      "nodes": [
+        {
+          "id": "direct",
+          "type": "direct"
+        }
+      ],
+      "rules": [
+        {
+          "domain": "youtube.com",
+          "action": "direct"
+        },
+        {
+          "domain": "example.com",
+          "action": "direct"
+        }
+      ]
+    }
+  ]
+}
