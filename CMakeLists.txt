@@ -22,6 +22,7 @@ add_library(proxycore STATIC
   src/net/socks5_client.cpp
   src/pal/pal_factory.cpp
   src/pal/windows/wintun_device.cpp
+  src/pal/windows/wintun_loader.cpp
 )
 
 target_include_directories(proxycore
