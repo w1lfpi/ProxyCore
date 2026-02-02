@@ -9,7 +9,11 @@ namespace proxycore::pal {
 
     struct TunConfig {
         std::string name = "proxycore-tun";
-        // позже добавим ip/mask/mtu
+
+        // Если пусто — адрес не назначаем.
+        // Пример: "10.7.0.1", prefix=24
+        std::string ipv4_addr;
+        std::uint8_t ipv4_prefix = 0;
     };
 
     enum class TunState : std::uint8_t {

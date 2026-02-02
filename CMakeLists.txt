@@ -13,13 +13,13 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system)
 
-# ---------------- core library ----------------
 add_library(proxycore STATIC
   src/engine.cpp
   src/config_manager.cpp
   src/net/socks5_server.cpp
   src/net/tcp_relay.cpp
   src/net/socks5_client.cpp
+
   src/pal/pal_factory.cpp
   src/pal/windows/wintun_device.cpp
   src/pal/windows/wintun_loader.cpp
@@ -29,7 +29,6 @@ target_include_directories(proxycore
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-
 target_include_directories(proxycore PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 if (WIN32)
@@ -46,7 +45,7 @@ target_link_libraries(proxycore
     Threads::Threads
 )
 
-# ---------------- proxycore_cli ----------------
+
 if(PROXYCORE_BUILD_CLI)
   add_executable(proxycore_cli
     apps/proxycore_cli/main.cpp
@@ -57,7 +56,6 @@ if(PROXYCORE_BUILD_CLI)
   endif()
 endif()
 
-# ---------------- socks5_probe ----------------
 add_executable(socks5_probe
   apps/socks5_probe/main.cpp
 )
@@ -66,7 +64,6 @@ if (WIN32)
   target_compile_definitions(socks5_probe PRIVATE _WIN32_WINNT=0x0A00)
 endif()
 
-# ---------------- clash importer library ----------------
 add_library(clash_yaml_importer STATIC
   src/clash/clash_yaml_importer.cpp
 )
@@ -76,7 +73,6 @@ if (WIN32)
   target_compile_definitions(clash_yaml_importer PUBLIC _WIN32_WINNT=0x0A00)
 endif()
 
-# ---------------- clash_dump ----------------
 add_executable(clash_dump
   apps/clash_dump/main.cpp
 )
@@ -85,7 +81,6 @@ if (WIN32)
   target_compile_definitions(clash_dump PRIVATE _WIN32_WINNT=0x0A00)
 endif()
 
-# ---------------- clash_convert ----------------
 add_executable(clash_convert
   apps/clash_convert/main.cpp
 )
