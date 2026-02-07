@@ -23,6 +23,10 @@ add_library(proxycore STATIC
   src/pal/pal_factory.cpp
   src/pal/windows/wintun_device.cpp
   src/pal/windows/wintun_loader.cpp
+
+  src/core/tun/ip_packets.cpp
+  src/core/tun/dns_proxy.cpp
+    src/core/tun/dns_proxy.cpp
 )
 
 target_include_directories(proxycore
