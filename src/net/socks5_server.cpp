@@ -1,7 +1,7 @@
 ﻿#include "socks5_server.hpp"
 #include "tcp_relay.hpp"
 #include "socks5_client.hpp"
-
+#include "http_connect_client.hpp"
 #include <array>
 #include <cstdint>
 #include <cstring>
@@ -34,14 +34,13 @@ namespace proxycore::net {
             using tcp = boost::asio::ip::tcp;
 
             tcp::socket client;
-            tcp::socket remote;     // либо direct dst, либо upstream socks5 tunnel
-            tcp::resolver resolver; // используем и для direct resolve, и для upstream resolve
+            tcp::socket remote;
+            tcp::resolver resolver;
 
             Socks5Server::DecideFn decide;
 
             std::array<std::uint8_t, 512> buf{};
 
-            // Для логов
             std::string dst_host;
             std::uint16_t dst_port = 0;
 
@@ -98,7 +97,7 @@ namespace proxycore::net {
 
                         if (cmd != kCmdConnect) {
                             spdlog::warn("[socks5] unsupported cmd={} from {}", (int)cmd, safe_remote_endpoint_str(client));
-                            reply_fail(0x07); // Command not supported
+                            reply_fail(0x07);
                             return;
                         }
 
@@ -112,11 +111,10 @@ namespace proxycore::net {
                 else if (atyp == kAtypDomain) read_domain_len();
                 else {
                     spdlog::warn("[socks5] unsupported atyp={} from {}", (int)atyp, safe_remote_endpoint_str(client));
-                    reply_fail(0x08); // Address type not supported
+                    reply_fail(0x08);
                 }
             }
 
-            // IP-цели пока считаем DIRECT (для “как Clash” позже добавим правила на IP/CIDR)
             void read_ipv4() {
                 auto self = shared_from_this();
                 boost::asio::async_read(client, boost::asio::buffer(buf.data(), 6),
@@ -176,14 +174,43 @@ namespace proxycore::net {
 
                         if (d.action == RouteDecision::Action::Reject) {
                             spdlog::info("[socks5] blocked by rules: {}:{}", dst_host, dst_port);
-                            reply_fail(0x02); // connection not allowed by ruleset
+                            reply_fail(0x02);
                             return;
                         }
 
                         if (d.action == RouteDecision::Action::ProxySocks5) {
-                            spdlog::info("[socks5] outbound via upstream socks5 {}:{} -> {}:{}",
+                            spdlog::info("[socks5] outbound via upstream SOCKS5 {}:{} -> {}:{}",
                                 d.upstream_host, d.upstream_port, dst_host, dst_port);
                             connect_via_upstream_socks5(std::move(d));
+                            return;
+                        }
+
+                        if (d.action == RouteDecision::Action::ProxyHttpConnect) {
+                            spdlog::info("[socks5] outbound via upstream HTTP CONNECT {}:{} -> {}:{}",
+                                d.upstream_host, d.upstream_port, dst_host, dst_port);
+
+                            auto self2 = shared_from_this();
+                            auto cli = std::make_shared<HttpConnectClient>(
+                                remote,
+                                resolver,
+                                d.upstream_host,
+                                d.upstream_port,
+                                dst_host,
+                                dst_port,
+                                d.username,
+                                d.password
+                            );
+
+                            cli->start([this, self2](const boost::system::error_code& ec2) {
+                                if (ec2) {
+                                    spdlog::warn("[socks5] upstream HTTP CONNECT failed {}:{} err={}", dst_host, dst_port, ec2.message());
+                                    reply_fail(0x01);
+                                    return;
+                                }
+                                spdlog::info("[socks5] upstream HTTP CONNECT tunnel ready {}:{}", dst_host, dst_port);
+                                reply_success_and_relay();
+                                });
+
                             return;
                         }
 
@@ -208,8 +235,8 @@ namespace proxycore::net {
 
                 cli->start([this, self](const boost::system::error_code& ec) {
                     if (ec) {
-                        spdlog::warn("[socks5] upstream socks5 failed {}:{} err={}", dst_host, dst_port, ec.message());
-                        reply_fail(0x01); // general SOCKS server failure
+                        spdlog::warn("[socks5] upstream SOCKS5 failed {}:{} err={}", dst_host, dst_port, ec.message());
+                        reply_fail(0x01);
                         return;
                     }
 
@@ -224,7 +251,7 @@ namespace proxycore::net {
                     [this, self, host, port](const boost::system::error_code& ec, tcp::resolver::results_type results) {
                         if (ec) {
                             spdlog::warn("[socks5] resolve failed {}:{} err={}", host, port, ec.message());
-                            reply_fail(0x04); // Host unreachable
+                            reply_fail(0x04);
                             return;
                         }
 
@@ -232,7 +259,7 @@ namespace proxycore::net {
                             [this, self, host, port](const boost::system::error_code& ec2, const tcp::endpoint& ep) {
                                 if (ec2) {
                                     spdlog::warn("[socks5] connect failed {}:{} err={}", host, port, ec2.message());
-                                    reply_fail(0x05); // Connection refused / general fail
+                                    reply_fail(0x05);
                                     return;
                                 }
 
@@ -260,12 +287,10 @@ namespace proxycore::net {
             }
 
             void reply_success_and_relay() {
-                // VER REP RSV ATYP BND.ADDR BND.PORT
-                // 0.0.0.0:0 достаточно для большинства клиентов
                 std::array<std::uint8_t, 10> resp{};
                 resp[0] = kSocksVer;
-                resp[1] = 0x00; // succeeded
-                resp[2] = 0x00; // rsv
+                resp[1] = 0x00;
+                resp[2] = 0x00;
                 resp[3] = kAtypIPv4;
 
                 auto self = shared_from_this();
@@ -275,7 +300,7 @@ namespace proxycore::net {
 
                         auto relay = std::make_shared<TcpRelay>(
                             std::move(client), std::move(remote),
-                            std::chrono::seconds(120) // как ты решил оставить
+                            std::chrono::seconds(120)
                         );
                         relay->start();
                     });
@@ -308,11 +333,11 @@ namespace proxycore::net {
         std::string bind_ip,
         std::uint16_t port,
         DecideFn decide)
-        : ioc_(ioc),
-        acceptor_(ioc),
-        bind_ip_(std::move(bind_ip)),
-        port_(port),
-        decide_(std::move(decide)) {
+        : ioc_(ioc)
+        , acceptor_(ioc)
+        , bind_ip_(std::move(bind_ip))
+        , port_(port)
+        , decide_(std::move(decide)) {
     }
 
     void Socks5Server::start() {
@@ -354,7 +379,6 @@ namespace proxycore::net {
                 else {
                     if (acceptor_.is_open()) spdlog::warn("[socks5] accept failed: {}", ec.message());
                 }
-
                 if (acceptor_.is_open()) do_accept();
             });
     }

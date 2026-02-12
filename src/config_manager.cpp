@@ -2,20 +2,28 @@
 
 #include <fstream>
 #include <sstream>
+#include <cctype>
 
 #include <nlohmann/json.hpp>
 #include <yaml-cpp/yaml.h>
 
 namespace proxycore {
 
-    static ProxyType proxy_type_from_string(const std::string& s) {
+    static std::string to_lower_copy(std::string s) {
+        for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    }
+
+    static ProxyType proxy_type_from_string(const std::string& s0) {
+        const std::string s = to_lower_copy(s0);
         if (s == "direct") return ProxyType::Direct;
         if (s == "http") return ProxyType::Http;
         if (s == "socks5") return ProxyType::Socks5;
         return ProxyType::Direct;
     }
 
-    static RuleAction rule_action_from_string(const std::string& s) {
+    static RuleAction rule_action_from_string(const std::string& s0) {
+        const std::string s = to_lower_copy(s0);
         if (s == "direct") return RuleAction::Direct;
         if (s == "proxy") return RuleAction::Proxy;
         if (s == "reject") return RuleAction::Reject;
@@ -33,7 +41,7 @@ namespace proxycore {
 
         const auto dot = path.find_last_of('.');
         std::string ext = (dot == std::string::npos) ? "" : path.substr(dot + 1);
-        for (auto& c : ext) c = static_cast<char>(::tolower(static_cast<unsigned char>(c)));
+        ext = to_lower_copy(ext);
 
         if (ext == "json") return load_from_text(text, "json", out);
         if (ext == "yml" || ext == "yaml") return load_from_text(text, "yaml", out);
@@ -45,11 +53,12 @@ namespace proxycore {
     }
 
     std::optional<ConfigError> ConfigManager::load_from_text(const std::string& text, const std::string& format, Config& out) {
-        if (format == "json") {
+        const std::string f = to_lower_copy(format);
+        if (f == "json") {
             if (auto e = parse_json(text, out)) return e;
             return validate(out);
         }
-        if (format == "yaml") {
+        if (f == "yaml") {
             if (auto e = parse_yaml(text, out)) return e;
             return validate(out);
         }
@@ -91,6 +100,7 @@ namespace proxycore {
                 for (const auto& jp : j["profiles"]) {
                     ConfigProfile p;
                     p.id = jp.value("id", "");
+                    p.default_outbound = jp.value("default_outbound", "");
 
                     if (jp.contains("nodes") && jp["nodes"].is_array()) {
                         for (const auto& jn : jp["nodes"]) {
@@ -108,9 +118,23 @@ namespace proxycore {
                     if (jp.contains("rules") && jp["rules"].is_array()) {
                         for (const auto& jr : jp["rules"]) {
                             DomainRule r;
-                            r.pattern = jr.value("domain", "");
                             r.action = rule_action_from_string(jr.value("action", "direct"));
                             r.proxy_node_id = jr.value("node", "");
+
+                            // ВАЖНО: поддерживаем И domain, И domain_suffix
+                            if (jr.contains("domain")) {
+                                r.match = DomainMatchType::Exact;
+                                r.pattern = jr.value("domain", "");
+                            }
+                            else if (jr.contains("domain_suffix")) {
+                                r.match = DomainMatchType::Suffix;
+                                r.pattern = jr.value("domain_suffix", "");
+                            }
+                            else {
+                                // неизвестный формат правила — пропускаем
+                                continue;
+                            }
+
                             p.domain_rules.push_back(std::move(r));
                         }
                     }
@@ -133,7 +157,6 @@ namespace proxycore {
 
             Config cfg;
 
-            // inbounds
             if (root["inbounds"] && root["inbounds"].IsMap()) {
                 auto inb = root["inbounds"];
 
@@ -161,6 +184,7 @@ namespace proxycore {
                 for (const auto& yp : root["profiles"]) {
                     ConfigProfile p;
                     if (yp["id"]) p.id = yp["id"].as<std::string>();
+                    if (yp["default_outbound"]) p.default_outbound = yp["default_outbound"].as<std::string>();
 
                     if (yp["nodes"] && yp["nodes"].IsSequence()) {
                         for (const auto& yn : yp["nodes"]) {
@@ -178,9 +202,21 @@ namespace proxycore {
                     if (yp["rules"] && yp["rules"].IsSequence()) {
                         for (const auto& yr : yp["rules"]) {
                             DomainRule r;
-                            if (yr["domain"]) r.pattern = yr["domain"].as<std::string>();
                             if (yr["action"]) r.action = rule_action_from_string(yr["action"].as<std::string>());
                             if (yr["node"]) r.proxy_node_id = yr["node"].as<std::string>();
+
+                            if (yr["domain"]) {
+                                r.match = DomainMatchType::Exact;
+                                r.pattern = yr["domain"].as<std::string>();
+                            }
+                            else if (yr["domain_suffix"]) {
+                                r.match = DomainMatchType::Suffix;
+                                r.pattern = yr["domain_suffix"].as<std::string>();
+                            }
+                            else {
+                                continue;
+                            }
+
                             p.domain_rules.push_back(std::move(r));
                         }
                     }
@@ -198,40 +234,49 @@ namespace proxycore {
     }
 
     std::optional<ConfigError> ConfigManager::validate(const Config& cfg) {
-        // socks5 inbound validation
         if (cfg.inbounds.socks5.has_value()) {
             const auto& s5 = *cfg.inbounds.socks5;
-            if (s5.enabled && s5.port == 0) {
-                return ConfigError{ "inbounds.socks5.port не может быть 0" };
-            }
-            if (s5.enabled && s5.bind.empty()) {
-                return ConfigError{ "inbounds.socks5.bind пустой" };
-            }
+            if (s5.enabled && s5.port == 0) return ConfigError{ "inbounds.socks5.port не может быть 0" };
+            if (s5.enabled && s5.bind.empty()) return ConfigError{ "inbounds.socks5.bind пустой" };
         }
 
-        // tun inbound validation
         if (cfg.inbounds.tun.has_value()) {
             const auto& t = *cfg.inbounds.tun;
-            if (t.enabled && t.name.empty()) {
-                return ConfigError{ "inbounds.tun.name пустой" };
-            }
+            if (t.enabled && t.name.empty()) return ConfigError{ "inbounds.tun.name пустой" };
         }
 
-        if (cfg.profiles.empty()) {
-            return ConfigError{ "В конфиге нет profiles" };
-        }
-        if (cfg.active_profile_id.empty()) {
-            return ConfigError{ "Не задан active_profile" };
-        }
+        if (cfg.profiles.empty()) return ConfigError{ "В конфиге нет profiles" };
+        if (cfg.active_profile_id.empty()) return ConfigError{ "Не задан active_profile" };
 
-        bool found = false;
+        const auto find_node = [](const ConfigProfile& p, const std::string& id) -> bool {
+            if (id.empty()) return false;
+            for (const auto& n : p.nodes) if (n.id == id) return true;
+            return false;
+            };
+
+        bool found_profile = false;
         for (const auto& p : cfg.profiles) {
             if (p.id.empty()) return ConfigError{ "У профиля отсутствует id" };
-            if (p.id == cfg.active_profile_id) found = true;
+            if (p.id == cfg.active_profile_id) found_profile = true;
+
+            if (!p.default_outbound.empty() && !find_node(p, p.default_outbound)) {
+                return ConfigError{ "default_outbound у профиля '" + p.id + "' ссылается на несуществующую node: " + p.default_outbound };
+            }
+
+            for (const auto& r : p.domain_rules) {
+                if (r.pattern.empty()) return ConfigError{ "Пустой pattern в rules профиля '" + p.id + "'" };
+
+                if (r.action == RuleAction::Proxy) {
+                    if (!r.proxy_node_id.empty() && !find_node(p, r.proxy_node_id)) {
+                        return ConfigError{ "rule.pattern='" + r.pattern + "' ссылается на несуществующую node: " + r.proxy_node_id };
+                    }
+                    if (r.proxy_node_id.empty() && p.default_outbound.empty()) {
+                        return ConfigError{ "rule.pattern='" + r.pattern + "': action=proxy, но node пустой и default_outbound не задан" };
+                    }
+                }
+            }
         }
-        if (!found) {
-            return ConfigError{ "active_profile не найден среди profiles" };
-        }
+        if (!found_profile) return ConfigError{ "active_profile не найден среди profiles" };
 
         return std::nullopt;
     }

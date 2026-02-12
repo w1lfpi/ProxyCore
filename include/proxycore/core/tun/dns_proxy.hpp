@@ -1,7 +1,8 @@
 ﻿#pragma once
-#include "proxycore/pal/tun.hpp"
+#include <proxycore/pal/tun.hpp>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -10,8 +11,8 @@ namespace proxycore::core::tun {
     class DnsProxy {
     public:
         struct Config {
-            std::string my_ip = "10.7.0.1";      // адрес TUN на ПК
-            std::string upstream_ip = "1.1.1.1"; // куда шлём DNS “наружу”
+            std::string my_ip = "10.7.0.1";
+            std::string upstream_ip = "1.1.1.1";
             std::uint16_t upstream_port = 53;
             int timeout_ms = 2000;
         };
@@ -27,7 +28,6 @@ namespace proxycore::core::tun {
         bool start(const Config& cfg);
         void stop();
 
-        // Вызывать на каждый IP-пакет из TUN
         void on_tun_packet(const std::uint8_t* data, std::size_t len);
 
         Stats stats() const;
@@ -39,7 +39,6 @@ namespace proxycore::core::tun {
 
         std::atomic<std::uint64_t> q_{ 0 }, a_{ 0 }, d_{ 0 };
 
-        // helpers
         static std::uint16_t be16(const std::uint8_t* p);
         static void wr16(std::uint8_t* p, std::uint16_t v);
         static std::uint16_t checksum16(const std::uint8_t* data, std::size_t len);

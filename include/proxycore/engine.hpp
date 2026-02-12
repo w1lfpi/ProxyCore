@@ -1,13 +1,13 @@
 #pragma once
+
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
-#include <vector>
-#include <optional>
-#include <cstdint>
 
-#include "proxycore/events.hpp"
 #include "proxycore/config.hpp"
+#include "proxycore/events.hpp"
 
 namespace proxycore {
 
@@ -25,11 +25,12 @@ namespace proxycore {
         Engine(const Engine&) = delete;
         Engine& operator=(const Engine&) = delete;
 
-        bool start(const EngineOptions& opts);
+        bool start(const EngineOptions& opts = {});
         void stop();
 
         bool load_config_file(const std::string& path);
-        bool load_config_text(const std::string& text, const std::string& format /* "json"|"yaml" */);
+        bool load_config_text(const std::string& text, const std::string& format);
+
         bool set_active_profile(const std::string& profile_id);
 
         EngineState state() const;

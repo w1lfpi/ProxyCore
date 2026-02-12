@@ -1,0 +1,15 @@
+socks-port: 1080
+allow-lan: false
+mode: rule
+log-level: info
+
+proxies: []
+
+proxy-groups:
+  - name: MAIN
+    type: select
+    proxies:
+      - DIRECT
+
+rules:
+  - MATCH,DIRECT

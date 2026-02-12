@@ -5,7 +5,6 @@
 #include <string>
 #include <vector>
 
-
 #include <boost/asio.hpp>
 
 namespace proxycore::net {

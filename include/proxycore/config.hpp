@@ -1,45 +1,29 @@
 ﻿#pragma once
+
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
-#include <optional>
-#include <cstdint>
 
 namespace proxycore {
 
-    enum class ProxyType : std::uint8_t {
-        Direct = 0,
-        Http,
-        Socks5
+    enum class ProxyType {
+        Direct,
+        Socks5,
+        Http
     };
 
-    struct ProxyNode {
-        std::string id;
-        ProxyType type = ProxyType::Direct;
-        std::string host;
-        std::uint16_t port = 0;
-        std::string username;
-        std::string password;
-    };
-
-    enum class RuleAction : std::uint8_t {
-        Direct = 0,
+    enum class RuleAction {
+        Direct,
         Proxy,
         Reject
     };
 
-    struct DomainRule {
-        std::string pattern;        // "example.com" или ".example.com"
-        RuleAction action = RuleAction::Direct;
-        std::string proxy_node_id;  // если action == Proxy
+    enum class DomainMatchType {
+        Exact,   // domain
+        Suffix   // domain_suffix
     };
 
-    struct ConfigProfile {
-        std::string id;
-        std::vector<ProxyNode> nodes;
-        std::vector<DomainRule> domain_rules;
-    };
-
-    // --- Inbounds ---
     struct Socks5Inbound {
         bool enabled = true;
         std::string bind = "127.0.0.1";
@@ -56,10 +40,44 @@ namespace proxycore {
         std::optional<TunInbound> tun;
     };
 
+    struct ProxyNode {
+        std::string id;
+        ProxyType type = ProxyType::Direct;
+
+        // socks5/http
+        std::string host;
+        std::uint16_t port = 0;
+
+        // auth (socks5 user/pass; http basic)
+        std::string username;
+        std::string password;
+    };
+
+    struct DomainRule {
+        DomainMatchType match = DomainMatchType::Exact;
+        std::string pattern;          // domain OR suffix (без ведущей точки)
+        RuleAction action = RuleAction::Direct;
+
+        // если action=proxy: можно указать конкретную ноду
+        // если пусто -> берём profile.default_outbound
+        std::string proxy_node_id;
+    };
+
+    struct ConfigProfile {
+        std::string id;
+
+        // default_outbound — строка id ноды
+        std::string default_outbound;
+
+        std::vector<ProxyNode> nodes;
+        std::vector<DomainRule> domain_rules;
+    };
+
     struct Config {
         Inbounds inbounds;
-        std::vector<ConfigProfile> profiles;
+
         std::string active_profile_id;
+        std::vector<ConfigProfile> profiles;
     };
 
     struct ConfigError {

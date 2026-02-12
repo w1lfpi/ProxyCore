@@ -1,0 +1,16 @@
+﻿{
+  "inbounds": {
+    "socks5": { "enabled": true, "bind": "127.0.0.1", "port": 1080 }
+  },
+  "active_profile": "local",
+  "profiles": [
+    {
+      "id": "local",
+      "default_outbound": "direct",
+      "nodes": [
+        { "id": "direct", "type": "direct" }
+      ],
+      "rules": []
+    }
+  ]
+}

@@ -1,19 +1,25 @@
 ﻿# Visual Studio
 .vs/
+*.user
+*.suo
 
-# Build output
+# CMake / builds
 out/
+build/
 CMakeFiles/
 CMakeCache.txt
+cmake_install.cmake
+*.ninja
+*.ninja_deps
+*.ninja_log
 
-# vcpkg artifacts
+# vcpkg (если у тебя он в дереве проекта)
+vcpkg_installed/
 **/vcpkg_installed/
-**/vcpkg-manifest-install.log
 
-# Secrets / local configs
-configs/
-config.generated.json
-
-# OS junk
-.DS_Store
-Thumbs.db
+# Binaries / obj
+*.exe
+*.dll
+*.pdb
+*.obj
+*.lib
