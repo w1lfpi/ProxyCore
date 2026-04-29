@@ -20,8 +20,8 @@ namespace proxycore {
     };
 
     enum class DomainMatchType {
-        Exact,   // domain
-        Suffix   // domain_suffix
+        Exact,
+        Suffix
     };
 
     struct Socks5Inbound {
@@ -33,6 +33,8 @@ namespace proxycore {
     struct TunInbound {
         bool enabled = false;
         std::string name = "proxycore-tun";
+        std::string ipv4_addr = "10.7.0.1";
+        std::uint8_t ipv4_prefix = 24;
     };
 
     struct Inbounds {
@@ -44,38 +46,29 @@ namespace proxycore {
         std::string id;
         ProxyType type = ProxyType::Direct;
 
-        // socks5/http
         std::string host;
         std::uint16_t port = 0;
 
-        // auth (socks5 user/pass; http basic)
         std::string username;
         std::string password;
     };
 
     struct DomainRule {
         DomainMatchType match = DomainMatchType::Exact;
-        std::string pattern;          // domain OR suffix (без ведущей точки)
+        std::string pattern;
         RuleAction action = RuleAction::Direct;
-
-        // если action=proxy: можно указать конкретную ноду
-        // если пусто -> берём profile.default_outbound
         std::string proxy_node_id;
     };
 
     struct ConfigProfile {
         std::string id;
-
-        // default_outbound — строка id ноды
         std::string default_outbound;
-
         std::vector<ProxyNode> nodes;
         std::vector<DomainRule> domain_rules;
     };
 
     struct Config {
         Inbounds inbounds;
-
         std::string active_profile_id;
         std::vector<ConfigProfile> profiles;
     };

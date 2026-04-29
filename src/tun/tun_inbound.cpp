@@ -1,5 +1,11 @@
 ﻿#include "proxycore/tun/tun_inbound.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cstdio>
 #include <cstring>
+#include <vector>
+
 #include <spdlog/spdlog.h>
 
 namespace proxycore::tun {
@@ -13,140 +19,214 @@ namespace proxycore::tun {
     }
 
     bool TunInbound::start(const Config& cfg) {
-        if (!tun_) return false;
+        if (!tun_) {
+            spdlog::error("[tun_inbound] no tun device");
+            return false;
+        }
+
+        if (running_.load()) {
+            return true;
+        }
 
         cfg_ = cfg;
 
-        // ipv4_addr "10.7.0.1" -> bytes (минимально, без общего парсера)
-        // Если захочешь — сделаем нормальный parse IPv4.
-        my_ip_[0] = 10; my_ip_[1] = 7; my_ip_[2] = 0; my_ip_[3] = 1;
+        {
+            unsigned a = 10, b = 7, c = 0, d = 1;
+            if (std::sscanf(cfg_.ipv4_addr.c_str(), "%u.%u.%u.%u", &a, &b, &c, &d) == 4) {
+                my_ip_[0] = static_cast<std::uint8_t>(a);
+                my_ip_[1] = static_cast<std::uint8_t>(b);
+                my_ip_[2] = static_cast<std::uint8_t>(c);
+                my_ip_[3] = static_cast<std::uint8_t>(d);
+            }
+        }
 
-        proxycore::pal::TunConfig pcfg;
-        pcfg.name = cfg_.name;
-        pcfg.ipv4_addr = cfg_.ipv4_addr;
-        pcfg.ipv4_prefix = cfg_.ipv4_prefix;
+        proxycore::pal::TunConfig tun_cfg;
+        tun_cfg.name = cfg_.name;
+        tun_cfg.ipv4_addr = cfg_.ipv4_addr;
+        tun_cfg.ipv4_prefix = cfg_.ipv4_prefix;
 
         tun_->set_read_handler([this](proxycore::pal::ITunDevice::Packet pkt) {
-            this->on_packet(std::move(pkt));
+            on_packet(std::move(pkt));
             });
 
-        if (!tun_->start(pcfg)) {
-            spdlog::error("[tun_inbound] tun start failed");
+        if (!tun_->start(tun_cfg)) {
+            spdlog::error(
+                "[tun_inbound] failed to start tun device: {} {}/{}",
+                cfg_.name,
+                cfg_.ipv4_addr,
+                static_cast<int>(cfg_.ipv4_prefix)
+            );
             return false;
         }
 
         running_.store(true);
-        spdlog::info("[tun_inbound] started name={} ipv4={}/{}",
-            cfg_.name, cfg_.ipv4_addr, (int)cfg_.ipv4_prefix);
+
+        spdlog::info(
+            "[tun_inbound] started: name={} ipv4={}/{}",
+            cfg_.name,
+            cfg_.ipv4_addr,
+            static_cast<int>(cfg_.ipv4_prefix)
+        );
+
         return true;
     }
 
     void TunInbound::stop() {
-        if (!tun_) return;
-        if (!running_.exchange(false)) return;
+        if (!running_.exchange(false)) {
+            return;
+        }
 
-        tun_->stop();
+        if (tun_) {
+            tun_->stop();
+        }
+
         spdlog::info("[tun_inbound] stopped");
     }
 
     proxycore::pal::TunStats TunInbound::stats() const {
-        if (!tun_) return {};
-        return tun_->stats();
-    }
-
-    void TunInbound::on_packet(proxycore::pal::ITunDevice::Packet pkt) {
-        if (!running_.load()) return;
-
-        // Минимальная логика ядра: отвечаем на ping своего IPv4.
-        proxycore::pal::ITunDevice::Packet reply;
-        if (make_icmpv4_echo_reply(pkt.data(), pkt.size(), my_ip_, reply)) {
-            (void)tun_->write(std::move(reply));
-            return;
+        if (!tun_) {
+            return {};
         }
-
-        // Дальше тут будет:
-        // - разбор TCP/UDP (5-tuple)
-        // - NAT/session table
-        // - форвардинг через socks5_client/tcp_relay
+        return tun_->stats();
     }
 
     std::uint16_t TunInbound::checksum16(const std::uint8_t* data, std::size_t len) {
         std::uint32_t sum = 0;
-        std::size_t i = 0;
 
-        while (i + 1 < len) {
-            sum += static_cast<std::uint16_t>((data[i] << 8) | data[i + 1]);
-            i += 2;
+        while (len >= 2) {
+            const std::uint16_t word =
+                static_cast<std::uint16_t>((static_cast<std::uint16_t>(data[0]) << 8) |
+                    static_cast<std::uint16_t>(data[1]));
+            sum += word;
+            data += 2;
+            len -= 2;
         }
-        if (i < len) sum += static_cast<std::uint16_t>(data[i] << 8);
 
-        while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
+        if (len == 1) {
+            sum += static_cast<std::uint16_t>(static_cast<std::uint16_t>(data[0]) << 8);
+        }
+
+        while (sum >> 16) {
+            sum = (sum & 0xFFFFu) + (sum >> 16);
+        }
+
         return static_cast<std::uint16_t>(~sum);
     }
 
-    bool TunInbound::parse_ipv4(const std::uint8_t* pkt, std::size_t len,
+    bool TunInbound::parse_ipv4(
+        const std::uint8_t* pkt,
+        std::size_t len,
         std::size_t& ihl_bytes,
         std::uint8_t& proto,
         std::uint8_t src[4],
         std::uint8_t dst[4]) {
-        if (len < 20) return false;
-        const std::uint8_t ver = (pkt[0] >> 4) & 0xF;
-        if (ver != 4) return false;
+        if (!pkt || len < 20) {
+            return false;
+        }
 
-        ihl_bytes = static_cast<std::size_t>(pkt[0] & 0x0F) * 4;
-        if (ihl_bytes < 20 || len < ihl_bytes) return false;
+        const std::uint8_t version = static_cast<std::uint8_t>(pkt[0] >> 4);
+        const std::uint8_t ihl = static_cast<std::uint8_t>(pkt[0] & 0x0F);
+
+        if (version != 4 || ihl < 5) {
+            return false;
+        }
+
+        ihl_bytes = static_cast<std::size_t>(ihl) * 4;
+        if (len < ihl_bytes) {
+            return false;
+        }
 
         proto = pkt[9];
+
         std::memcpy(src, pkt + 12, 4);
         std::memcpy(dst, pkt + 16, 4);
+
         return true;
     }
 
     bool TunInbound::is_same_ipv4(const std::uint8_t a[4], const std::uint8_t b[4]) {
-        return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3];
+        return std::memcmp(a, b, 4) == 0;
     }
 
-    bool TunInbound::make_icmpv4_echo_reply(const std::uint8_t* in_pkt, std::size_t in_len,
+    bool TunInbound::make_icmpv4_echo_reply(
+        const std::uint8_t* in_pkt,
+        std::size_t in_len,
         const std::uint8_t my_ip[4],
         proxycore::pal::ITunDevice::Packet& out_pkt) {
-        std::size_t ihl = 0;
+        if (!in_pkt || in_len < 20) {
+            return false;
+        }
+
+        std::size_t ihl_bytes = 0;
         std::uint8_t proto = 0;
-        std::uint8_t src[4]{}, dst[4]{};
+        std::uint8_t src[4]{};
+        std::uint8_t dst[4]{};
 
-        if (!parse_ipv4(in_pkt, in_len, ihl, proto, src, dst)) return false;
-        if (proto != 1) return false; // ICMP
-        if (!is_same_ipv4(dst, my_ip)) return false;
+        if (!parse_ipv4(in_pkt, in_len, ihl_bytes, proto, src, dst)) {
+            return false;
+        }
 
-        if (in_len < ihl + 8) return false;
-        const std::uint8_t icmp_type = in_pkt[ihl + 0];
-        const std::uint8_t icmp_code = in_pkt[ihl + 1];
-        if (icmp_type != 8 || icmp_code != 0) return false;
+        if (proto != 1) {
+            return false;
+        }
+
+        if (!is_same_ipv4(dst, my_ip)) {
+            return false;
+        }
+
+        if (in_len < ihl_bytes + 8) {
+            return false;
+        }
+
+        const std::uint8_t* icmp = in_pkt + ihl_bytes;
+        const std::size_t icmp_len = in_len - ihl_bytes;
+
+        if (icmp[0] != 8 || icmp[1] != 0) {
+            return false;
+        }
 
         out_pkt.assign(in_pkt, in_pkt + in_len);
 
-        // swap src/dst
-        std::memcpy(out_pkt.data() + 12, dst, 4);
-        std::memcpy(out_pkt.data() + 16, src, 4);
+        std::uint8_t* out_ip = out_pkt.data();
+        std::uint8_t* out_icmp = out_ip + ihl_bytes;
 
-        // type=0 reply
-        out_pkt[ihl + 0] = 0;
-        out_pkt[ihl + 1] = 0;
+        std::swap(out_ip[12], out_ip[16]);
+        std::swap(out_ip[13], out_ip[17]);
+        std::swap(out_ip[14], out_ip[18]);
+        std::swap(out_ip[15], out_ip[19]);
 
-        // ICMP checksum
-        out_pkt[ihl + 2] = 0;
-        out_pkt[ihl + 3] = 0;
-        const std::uint16_t icmp_sum = checksum16(out_pkt.data() + ihl, in_len - ihl);
-        out_pkt[ihl + 2] = static_cast<std::uint8_t>((icmp_sum >> 8) & 0xFF);
-        out_pkt[ihl + 3] = static_cast<std::uint8_t>(icmp_sum & 0xFF);
+        out_ip[10] = 0;
+        out_ip[11] = 0;
+        const std::uint16_t ip_csum = checksum16(out_ip, ihl_bytes);
+        out_ip[10] = static_cast<std::uint8_t>((ip_csum >> 8) & 0xFF);
+        out_ip[11] = static_cast<std::uint8_t>(ip_csum & 0xFF);
 
-        // IPv4 header checksum
-        out_pkt[10] = 0;
-        out_pkt[11] = 0;
-        const std::uint16_t ip_sum = checksum16(out_pkt.data(), ihl);
-        out_pkt[10] = static_cast<std::uint8_t>((ip_sum >> 8) & 0xFF);
-        out_pkt[11] = static_cast<std::uint8_t>(ip_sum & 0xFF);
+        out_icmp[0] = 0;
+        out_icmp[1] = 0;
+        out_icmp[2] = 0;
+        out_icmp[3] = 0;
+
+        const std::uint16_t icmp_csum = checksum16(out_icmp, icmp_len);
+        out_icmp[2] = static_cast<std::uint8_t>((icmp_csum >> 8) & 0xFF);
+        out_icmp[3] = static_cast<std::uint8_t>(icmp_csum & 0xFF);
 
         return true;
+    }
+
+    void TunInbound::on_packet(proxycore::pal::ITunDevice::Packet pkt) {
+        if (!running_.load()) {
+            return;
+        }
+
+        tcp_tracker_.inspect_packet(pkt);
+        tcp_session_manager_.handle_packet(pkt);
+
+        proxycore::pal::ITunDevice::Packet reply;
+        if (make_icmpv4_echo_reply(pkt.data(), pkt.size(), my_ip_, reply)) {
+            if (tun_ && !reply.empty()) {
+                tun_->write(std::move(reply));
+            }
+        }
     }
 
 } // namespace proxycore::tun

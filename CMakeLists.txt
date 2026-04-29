@@ -28,6 +28,10 @@ add_library(proxycore STATIC
 
   src/core/tun/ip_packets.cpp
   src/core/tun/dns_proxy.cpp
+  src/core/tun/tcp_flow_tracker.cpp
+
+  src/tun/tun_inbound.cpp
+  src/tun/tcp_session_manager.cpp
 )
 
 target_include_directories(proxycore
@@ -52,32 +56,44 @@ target_link_libraries(proxycore
 )
 
 if(PROXYCORE_BUILD_CLI)
-  add_executable(proxycore_cli apps/proxycore_cli/main.cpp)
+  add_executable(proxycore_cli
+    apps/proxycore_cli/main.cpp
+  )
   target_link_libraries(proxycore_cli PRIVATE proxycore)
   if (WIN32)
     target_compile_definitions(proxycore_cli PRIVATE _WIN32_WINNT=0x0A00)
   endif()
 endif()
 
-add_executable(socks5_probe apps/socks5_probe/main.cpp)
+add_executable(socks5_probe
+  apps/socks5_probe/main.cpp
+)
 target_link_libraries(socks5_probe PRIVATE Boost::system Threads::Threads)
 if (WIN32)
   target_compile_definitions(socks5_probe PRIVATE _WIN32_WINNT=0x0A00)
 endif()
 
-add_library(clash_yaml_importer STATIC src/clash/clash_yaml_importer.cpp)
+add_library(clash_yaml_importer STATIC
+  src/clash/clash_yaml_importer.cpp
+)
 target_include_directories(clash_yaml_importer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(clash_yaml_importer PUBLIC yaml-cpp::yaml-cpp)
 if (WIN32)
   target_compile_definitions(clash_yaml_importer PUBLIC _WIN32_WINNT=0x0A00)
 endif()
 
-add_executable(clash_dump apps/clash_dump/main.cpp)
+add_executable(clash_dump
+  apps/clash_dump/main.cpp
+)
 target_link_libraries(clash_dump PRIVATE clash_yaml_importer fmt::fmt)
 
-add_executable(clash_convert apps/clash_convert/main.cpp)
+add_executable(clash_convert
+  apps/clash_convert/main.cpp
+)
 target_link_libraries(clash_convert PRIVATE clash_yaml_importer nlohmann_json::nlohmann_json)
 
-add_executable(tun_probe apps/tun_probe/main.cpp)
+add_executable(tun_probe
+  apps/tun_probe/main.cpp
+)
 target_include_directories(tun_probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(tun_probe PRIVATE proxycore)
